@@ -1,0 +1,50 @@
+name: Ubuntu GNOME Desktop (root / redz)
+
+on:
+  workflow_dispatch:          # bisa dijalankan manual dari tab Actions
+    inputs:
+      duration:
+        description: 'Durasi sesi (menit)'
+        required: true
+        default: '60'
+
+jobs:
+  gnome-desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360      # maksimal 6 jam, sesuaikan
+
+    steps:
+      - name: Jalankan container Ubuntu GNOME + noVNC
+        run: |
+          docker run -d --name ubuntu-desktop \
+            -p 6080:80 \
+            -e USER=root \
+            -e VNC_PW=redz \
+            -e DESKTOP=gnome \
+            -e RESOLUTION=1366x768 \
+            dorowu/ubuntu-desktop-lxde-vnc
+
+      - name: Install Cloudflared & buat tunnel publik
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          # Jalankan tunnel di background, output disimpan ke file log
+          nohup ./cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
+          echo "Menunggu tunnel siap..."
+          sleep 15
+
+      - name: Tampilkan link akses & pertahankan sesi
+        run: |
+          # Ambil URL dari log tunnel
+          TUNNEL_URL=$(grep -o 'https://.*trycloudflare.com' tunnel.log | head -n 1)
+          echo "============================================"
+          echo "  Desktop Ubuntu GNOME siap diakses"
+          echo "  Buka browser dan kunjungi:"
+          echo "  $TUNNEL_URL"
+          echo "  Password VNC: redz"
+          echo "  (Login otomatis sebagai root)"
+          echo "============================================"
+          # Pertahankan job selama durasi yang diinput (menit)
+          DURATION=${{ github.event.inputs.duration }}
+          echo "Sesi akan berlangsung selama ${DURATION} menit..."
+          sleep ${DURATION}m
