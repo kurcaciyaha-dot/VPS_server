@@ -1,4 +1,4 @@
-name: Ubuntu Server CI
+name: Ubuntu Server CI (VPS Mode via bore.pub)
 
 on:
   push:
@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360   # Maks 6 jam (batas GitHub Actions)
 
     steps:
       - name: Checkout repository
@@ -46,60 +47,77 @@ jobs:
           echo "✅ SSH server dikonfigurasi dan direstart"
           sudo systemctl status ssh --no-pager
 
-      - name: Test SSH connectivity
+      - name: Install bore (expose local port to internet)
         run: |
-          echo "Testing SSH connection..."
-          sshpass -p 'redz' ssh -o StrictHostKeyChecking=no root@localhost "echo '✅ SSH connection successful as root'"
+          echo "Menginstall bore..."
+          # Download binary bore dari GitHub releases
+          curl -fsSL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz -o bore.tar.gz
+          tar xzf bore.tar.gz
+          sudo mv bore /usr/local/bin/bore
+          sudo chmod +x /usr/local/bin/bore
+          echo "✅ bore terinstall"
 
-      - name: Run deployment script
+      - name: Expose SSH port via bore.pub
         run: |
-          echo "========================================="
-          echo "  Menjalankan di Ubuntu Server"
-          echo "  (GitHub Actions Runner)"
-          echo "========================================="
-          
-          # Test sudo access with new password
-          echo "Testing root access..."
-          echo "redz" | sudo -S whoami
-          
-          # Create test directory
-          sudo mkdir -p /opt/deployment
-          echo "✅ Direktori /opt/deployment dibuat"
-          
-          # Create deployment script
-          cat << 'EOF' | sudo tee /opt/deployment/deploy.sh
-          #!/bin/bash
-          echo "=== Deployment Script ==="
-          echo "Server: $(hostname)"
-          echo "Date: $(date)"
-          echo "Root access verified"
-          echo "=== Script Complete ==="
-          EOF
-          
-          sudo chmod +x /opt/deployment/deploy.sh
-          echo "✅ Deployment script dibuat"
-          
-          # Run deployment script
-          /opt/deployment/deploy.sh
+          echo "Menjalankan bore untuk meneruskan port 22 ke bore.pub..."
+          # Jalankan bore di background, simpan output ke file
+          nohup bore local 22 --to bore.pub > /tmp/bore.log 2>&1 &
+          BORE_PID=$!
+          echo "Bore PID: $BORE_PID"
 
-      - name: Verify system status
-        run: |
-          echo "=== System Verification ==="
-          echo "Hostname: $(hostname)"
-          echo "Disk Usage:"
-          df -h /
-          echo "Memory Usage:"
-          free -h
-          echo "Running Processes:"
-          ps aux --sort=-%mem | head -n 5
-          echo "=== Verification Complete ==="
+          # Tunggu sebentar agar bore mendapatkan alamat remote
+          sleep 5
 
-      - name: Final status
+          # Cek apakah bore masih berjalan
+          if ! kill -0 $BORE_PID 2>/dev/null; then
+            echo "❌ Bore gagal berjalan. Log:"
+            cat /tmp/bore.log
+            exit 1
+          fi
+
+          # Ambil informasi remote address dari log
+          # Format output bore: "listening at bore.pub:XXXXX"
+          REMOTE_ADDR=$(grep -oP 'listening at \K[^ ]+' /tmp/bore.log | tail -1)
+          if [ -z "$REMOTE_ADDR" ]; then
+            echo "⚠️  Tidak dapat membaca alamat remote, menunggu lebih lama..."
+            sleep 10
+            REMOTE_ADDR=$(grep -oP 'listening at \K[^ ]+' /tmp/bore.log | tail -1)
+          fi
+
+          if [ -z "$REMOTE_ADDR" ]; then
+            echo "❌ Tidak dapat menemukan alamat remote. Log lengkap:"
+            cat /tmp/bore.log
+            exit 1
+          fi
+
+          echo "========================================="
+          echo "   VPS SEMENTARA SIAP DIGUNAKAN"
+          echo "========================================="
+          echo " Remote address: ${REMOTE_ADDR}"
+          echo " SSH command:    ssh root@${REMOTE_ADDR}"
+          echo " Password root:  redz"
+          echo "========================================="
+          echo " Server akan aktif hingga workflow timeout (max 6 jam)"
+          echo " Jangan tutup tab ini jika ingin tetap terhubung."
+          echo "========================================="
+
+          # Simpan info koneksi untuk step selanjutnya
+          echo "REMOTE_ADDR=${REMOTE_ADDR}" >> $GITHUB_ENV
+          echo "BORE_PID=${BORE_PID}" >> $GITHUB_ENV
+
+      - name: Keep alive (jangan biarkan job selesai)
         run: |
-          echo "========================================="
-          echo "✅ Semua tasks berhasil dijalankan!"
-          echo "========================================="
-          echo "Password root: redz"
-          echo "SSH: Enabled"
-          echo "Status: Production Ready"
-          echo "========================================="
+          echo "Menjaga koneksi bore tetap hidup..."
+          echo "VPS dapat diakses di: $REMOTE_ADDR"
+          echo "SSH: ssh root@${REMOTE_ADDR}  (password: redz)"
+          echo "Menunggu hingga timeout (6 jam) atau workflow dibatalkan..."
+          # Loop tak terbatas untuk menjaga job tetap berjalan
+          while true; do
+            # Cek apakah bore masih berjalan
+            if ! kill -0 $BORE_PID 2>/dev/null; then
+              echo "❌ Bore berhenti, memeriksa log:"
+              cat /tmp/bore.log
+              exit 1
+            fi
+            sleep 60
+          done
