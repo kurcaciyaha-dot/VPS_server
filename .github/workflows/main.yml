@@ -1,0 +1,105 @@
+name: Ubuntu Server CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Ubuntu version
+        run: |
+          echo "=== Ubuntu Version ==="
+          lsb_release -a
+          echo "=== Kernel Info ==="
+          uname -a
+
+      - name: Update package list
+        run: sudo apt-get update
+
+      - name: Install tools (neofetch, sudo, nano, htop, openssh-server)
+        run: sudo apt-get install -y neofetch sudo nano htop openssh-server
+
+      - name: Show system info
+        run: neofetch --stdout
+
+      - name: Change root password to "redz"
+        run: |
+          echo "Mengganti password root..."
+          echo "root:redz" | sudo chpasswd
+          echo "✅ Password root berhasil diganti menjadi 'redz'"
+
+      - name: Configure SSH server
+        run: |
+          echo "Mengkonfigurasi SSH server..."
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh
+          echo "✅ SSH server dikonfigurasi dan direstart"
+          sudo systemctl status ssh --no-pager
+
+      - name: Test SSH connectivity
+        run: |
+          echo "Testing SSH connection..."
+          sshpass -p 'redz' ssh -o StrictHostKeyChecking=no root@localhost "echo '✅ SSH connection successful as root'"
+
+      - name: Run deployment script
+        run: |
+          echo "========================================="
+          echo "  Menjalankan di Ubuntu Server"
+          echo "  (GitHub Actions Runner)"
+          echo "========================================="
+          
+          # Test sudo access with new password
+          echo "Testing root access..."
+          echo "redz" | sudo -S whoami
+          
+          # Create test directory
+          sudo mkdir -p /opt/deployment
+          echo "✅ Direktori /opt/deployment dibuat"
+          
+          # Create deployment script
+          cat << 'EOF' | sudo tee /opt/deployment/deploy.sh
+          #!/bin/bash
+          echo "=== Deployment Script ==="
+          echo "Server: $(hostname)"
+          echo "Date: $(date)"
+          echo "Root access verified"
+          echo "=== Script Complete ==="
+          EOF
+          
+          sudo chmod +x /opt/deployment/deploy.sh
+          echo "✅ Deployment script dibuat"
+          
+          # Run deployment script
+          /opt/deployment/deploy.sh
+
+      - name: Verify system status
+        run: |
+          echo "=== System Verification ==="
+          echo "Hostname: $(hostname)"
+          echo "Disk Usage:"
+          df -h /
+          echo "Memory Usage:"
+          free -h
+          echo "Running Processes:"
+          ps aux --sort=-%mem | head -n 5
+          echo "=== Verification Complete ==="
+
+      - name: Final status
+        run: |
+          echo "========================================="
+          echo "✅ Semua tasks berhasil dijalankan!"
+          echo "========================================="
+          echo "Password root: redz"
+          echo "SSH: Enabled"
+          echo "Status: Production Ready"
+          echo "========================================="
