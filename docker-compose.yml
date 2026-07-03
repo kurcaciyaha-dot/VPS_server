@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  ubuntu-gnome:
+    image: fcwu/docker-ubuntu-vnc-desktop
+    container_name: ubuntu-desktop
+    environment:
+      - USER=root               # Login sebagai root
+      - VNC_PASSWD=redz         # Password VNC
+      - DESKTOP=gnome           # Desktop environment GNOME
+      - RESOLUTION=1366x768     # Resolusi layar (bisa diubah)
+    ports:
+      - "6080:80"               # Akses noVNC via http://localhost:6080
+      # - "5900:5900"           # Opsional: akses VNC langsung
+    volumes:
+      - ./root-data:/root       # Data root disimpan di folder lokal
+    restart: unless-stopped
