@@ -1,0 +1,112 @@
+name: Kali Linux Full Desktop (bore.pub)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  kali-vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # 6 jam maksimal
+
+    container:
+      image: kalilinux/kali-rolling
+      options: --privileged   # untuk ssh & systemd jika diperlukan
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update & install essential tools
+        run: |
+          apt-get update
+          apt-get install -y sudo wget curl ca-certificates openssh-server fastfetch
+
+      - name: Install Kali full desktop (XFCE + tools)
+        run: |
+          echo "Menginstall desktop environment (proses ini memakan waktu)..."
+          apt-get install -y kali-linux-default
+          # Hapus package yang tidak perlu untuk menghemat waktu/ruang (opsional)
+          # apt-get clean
+
+      - name: Show system info (fastfetch)
+        run: fastfetch --stdout
+
+      - name: Change root password to "redz"
+        run: |
+          echo "root:redz" | chpasswd
+          echo "✅ Password root diubah menjadi 'redz'"
+
+      - name: Configure & start SSH server
+        run: |
+          # Generate host keys jika belum ada
+          ssh-keygen -A
+          # Izinkan root login dengan password
+          echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+          echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+          # Jalankan SSH daemon secara manual
+          /usr/sbin/sshd
+          echo "✅ SSH server berjalan"
+
+      - name: Install bore (tunnel tool)
+        run: |
+          curl -fsSL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz -o bore.tar.gz
+          tar xzf bore.tar.gz
+          mv bore /usr/local/bin/bore
+          chmod +x /usr/local/bin/bore
+          echo "✅ bore terinstall"
+
+      - name: Expose SSH port via bore.pub
+        run: |
+          echo "Meneruskan port 22 ke bore.pub..."
+          nohup bore local 22 --to bore.pub > /tmp/bore.log 2>&1 &
+          BORE_PID=$!
+          echo "Bore PID: $BORE_PID"
+
+          # Tunggu alamat remote tersedia
+          sleep 8
+          REMOTE_ADDR=$(grep -oP 'listening at \K[^ ]+' /tmp/bore.log | tail -1)
+          if [ -z "$REMOTE_ADDR" ]; then
+            sleep 10
+            REMOTE_ADDR=$(grep -oP 'listening at \K[^ ]+' /tmp/bore.log | tail -1)
+          fi
+
+          if [ -z "$REMOTE_ADDR" ]; then
+            echo "❌ Gagal mendapatkan alamat remote. Log:"
+            cat /tmp/bore.log
+            exit 1
+          fi
+
+          echo "========================================="
+          echo "   KALI LINUX FULL DESKTOP - SIAP DIGUNAKAN"
+          echo "========================================="
+          echo " Remote address : ${REMOTE_ADDR}"
+          echo " SSH command    : ssh root@${REMOTE_ADDR}"
+          echo " Password root  : redz"
+          echo "========================================="
+          echo " Desktop XFCE sudah terinstall."
+          echo " Gunakan X11 forwarding agar GUI muncul:"
+          echo "   ssh -X root@${REMOTE_ADDR}"
+          echo "========================================="
+          echo " Server akan aktif hingga workflow timeout (6 jam)"
+          echo "========================================="
+
+          echo "REMOTE_ADDR=${REMOTE_ADDR}" >> $GITHUB_ENV
+          echo "BORE_PID=${BORE_PID}" >> $GITHUB_ENV
+
+      - name: Keep alive
+        run: |
+          echo "Menjaga koneksi tetap hidup..."
+          echo "Akses: ssh root@${REMOTE_ADDR} (pass: redz)"
+          echo "Desktop: gunakan -X untuk GUI"
+          while true; do
+            if ! kill -0 $BORE_PID 2>/dev/null; then
+              echo "❌ Bore berhenti, cek log:"
+              cat /tmp/bore.log
+              exit 1
+            fi
+            sleep 60
+          done
