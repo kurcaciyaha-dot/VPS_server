@@ -1,0 +1,56 @@
+name: Simple Windows RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      timeout:
+        description: 'Timeout (minutes)'
+        required: true
+        default: '120'
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    steps:
+    - name: Download Chrome Remote Desktop
+      run: |
+        Invoke-WebRequest -Uri "https://dl.google.com/dl/edgedl/chrome-remote-desktop/chromeremotedesktop.msi" -OutFile crd.msi
+        msiexec /i crd.msi /quiet /norestart
+        
+    - name: Start RDP Service
+      run: |
+        # Generate random PIN
+        $pin = -join ((48..57) | Get-Random -Count 6 | ForEach-Object { [char]$_ })
+        
+        # Start service
+        Start-Service chromoting
+        
+        # Get connection command
+        $code = "C:\Program Files (x86)\Google\Chrome Remote Desktop\start_host.exe"
+        
+        # Display info
+        Write-Host "================================================"
+        Write-Host "WINDOWS REMOTE DESKTOP ACCESS"
+        Write-Host "================================================"
+        Write-Host ""
+        Write-Host "PIN: $pin"
+        Write-Host ""
+        Write-Host "1. Go to: https://remotedesktop.google.com/headless"
+        Write-Host "2. Click 'Set up remote access'"
+        Write-Host "3. Enter this authorization code:"
+        Write-Host "${{ secrets.CRD_AUTH_CODE }}"
+        Write-Host "4. Use PIN: $pin"
+        Write-Host "================================================"
+        
+        # Keep alive
+        $timeout = ${{ github.event.inputs.timeout || 120 }}
+        $end = (Get-Date).AddMinutes($timeout)
+        while ((Get-Date) -lt $end) {
+          Write-Host "Session active... $([math]::Round(($end - (Get-Date)).TotalMinutes, 0))m remaining"
+          Start-Sleep -Seconds 60
+        }
+
+    - name: Cleanup
+      if: always()
+      run: |
+        Stop-Service chromoting -ErrorAction SilentlyContinue
